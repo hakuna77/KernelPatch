@@ -524,6 +524,7 @@ static void _linux_security_selinux_avc_sym_match(const char *name, unsigned lon
 
 #include <security/selinux/include/security.h>
 #include <security/selinux/include/classmap.h>
+#include "../../include/pgtable.h"
 
 int kvar_def(selinux_enabled_boot) = 0;
 int kvar_def(selinux_enabled) = 0;
@@ -591,11 +592,53 @@ void kfunc_def(ebitmap_cache_init)(void) = 0;
 void kfunc_def(hashtab_cache_init)(void) = 0;
 int kfunc_def(security_sidtab_hash_stats)(char *page) = 0;
 
+#define SELINUX_STATE_OFFSET_4_14_186 0x2432ea8UL
+
+static unsigned long resolve_selinux_state_fallback(void)
+{
+    unsigned long addr;
+
+    if (kver != VERSION(4, 14, 186))
+        return 0;
+
+    if (!kernel_va || !kernel_size)
+        return 0;
+
+    addr = kernel_va + SELINUX_STATE_OFFSET_4_14_186;
+
+    if (addr < kernel_va ||
+        addr >= kernel_va + kernel_size)
+        return 0;
+
+    return addr;
+}
+
 static void _linux_security_selinux_sym_match(const char *name, unsigned long addr)
 {
     // kvar_match(selinux_enabled_boot, name, addr);
     // kvar_match(selinux_enabled, name, addr);
     kvar_match(selinux_state, name, addr);
+    /*
+     * Stock begonia 4.14.186:
+     * CONFIG_KALLSYMS_ALL=n sehingga selinux_state
+     * tidak muncul di kallsyms, tetapi objeknya tetap ada
+     * pada offset image 0x2432ea8.
+     */
+    if (!kvar(selinux_state)) {
+        unsigned long fallback =
+            resolve_selinux_state_fallback();
+
+        if (fallback) {
+            kvar(selinux_state) =
+                (struct selinux_state *)fallback;
+
+            log_boot(
+                "selinux_state fallback: offset=0x%lx addr=%px\n",
+                SELINUX_STATE_OFFSET_4_14_186,
+                kvar(selinux_state)
+            );
+        }
+    }
     // kvar_match(secclass_map, name, addr);
     // kfunc_match(security_mls_enabled, name, addr);
     // kfunc_match(security_load_policy, name, addr);
